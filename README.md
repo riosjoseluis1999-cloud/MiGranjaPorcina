@@ -52,3 +52,11 @@ Es obligatorio reemplazar estas cuentas por credenciales únicas y un mecanismo 
 - Abre la **raíz** que contiene `settings.gradle.kts` como proyecto Android Studio. Si usas GitHub, el workflow compila desde la raíz, no desde una carpeta `android/`.
 
 Consulta `docs/FLUJO_REAL.md` para el recorrido de uso y `docs/ACTUALIZAR_DESDE_CELULAR.md` si subes el código con Android.
+
+
+## Actualización 0.2.1 de revisión de compilación
+
+- Ajuste de nombres en verificación de hash del inicio de sesión para evitar ambigüedad de identificadores.
+- Workflow GitHub Actions que conserva `build.log` y muestra errores específicos cuando falla la compilación.
+- VersionCode 3 sin borrar la base Room de la v2.
+- Consulta `docs/COMPILACION_Y_ERRORES.md` antes de actualizar GitHub.

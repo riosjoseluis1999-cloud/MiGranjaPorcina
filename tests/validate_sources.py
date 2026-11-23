@@ -18,7 +18,7 @@ assert '¿Quieres actualizar algún alimento anterior como agotado?' in finance
 assert 'if(!waste) assign("ALIMENTO"' in repo
 assert 'val oldUsed=d.usages()' in repo
 assert 'AGOTADO' in repo
-assert 'TIRIOS-AGRO-v2-APK' in (r/'.github/workflows/android-apk.yml').read_text()
+assert 'TIRIOS-AGRO-v2-1-APK' in (r/'.github/workflows/android-apk.yml').read_text()
 assert 'android-actions/setup-android@v4' in (r/'.github/workflows/android-apk.yml').read_text()
 assert '2025.10.00' in (r/'app/build.gradle.kts').read_text()
 assert (r/'app/src/main/res/drawable-nodpi/logo_tirios.png').is_file()

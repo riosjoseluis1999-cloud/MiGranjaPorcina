@@ -8,7 +8,7 @@ permissions:
 jobs:
   apk-debug:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Obtener fuentes
         uses: actions/checkout@v4
@@ -25,12 +25,40 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.14.3'
-      - name: Compilar
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
-      - name: Descargar APK
+      - name: Comprobar estructura
+        run: |
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/java/pe/granja/porcina/MainActivity.kt
+          echo 'Estructura del proyecto correcta'
+      - name: Compilar APK de depuración
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee build.log
+      - name: Mostrar errores si falla
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f build.log ]; then
+            echo '--- Errores relevantes ---'
+            grep -E '(^e: | error: |^FAILURE:|^\* What went wrong:|^> Task .*FAILED|Compilation error|Could not resolve|Could not find)' build.log | tail -n 100 || true
+          else
+            echo 'La compilación no comenzó; revisar pasos anteriores.'
+          fi
+      - name: Guardar registro de compilación
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TIRIOS-AGRO-v2-APK
+          name: TIRIOS-AGRO-LOG-COMPILACION
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Descargar APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TIRIOS-AGRO-v2-1-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
           if-no-files-found: error

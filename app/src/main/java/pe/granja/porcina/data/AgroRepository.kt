@@ -24,8 +24,8 @@ object Crypto {
         return try { Base64.getEncoder().encodeToString(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded) }
         finally { spec.clearPassword() }
     }
-    fun ok(password:String,salt:String,hash:String)=MessageDigest.isEqual(
-        Base64.getDecoder().decode(hash(password,salt)),Base64.getDecoder().decode(hash))
+    fun ok(password:String,salt:String,expectedHash:String)=MessageDigest.isEqual(
+        Base64.getDecoder().decode(hash(password,salt)),Base64.getDecoder().decode(expectedHash))
 }
 
 class AgroRepository(private val db:AgroDb) {
