@@ -5,10 +5,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,287 +16,196 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.room.Room
 import kotlinx.coroutines.launch
 import pe.granja.porcina.data.*
+import pe.granja.porcina.ui.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val Forest = Color(0xFF1E7259)
-private val Cream = Color(0xFFFBF9F3)
-private val Ink = Color(0xFF263C34)
-private val Coral = Color(0xFFE6A056)
-private val dayFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "PE"))
-fun date(ms: Long) = dayFormat.format(Date(ms))
+val Green=Color(0xFF197146)
+val BG=Color(0xFFF7F8F5)
+val Orange=Color(0xFFE69C45)
+fun day(v:Long?)=if(v==null)"Sin fecha" else SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).format(Date(v))
+fun age(birth:Long?):String {
+    if(birth==null) return "Edad no indicada"
+    val days=((System.currentTimeMillis()-birth)/86400000).coerceAtLeast(0)
+    return if(days<60) "$days días" else "${days/30} meses"
+}
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
+class MainActivity:ComponentActivity(){
+    override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
-        val database = Room.databaseBuilder(applicationContext, GranjaDatabase::class.java, "granja_local.db")
-            .build()
-        val repo = GranjaRepository(database)
+        // BD separada de la demo anterior: conserva la demo, la versión real comienza sin registros de negocio.
+        val db=Room.databaseBuilder(applicationContext,AgroDb::class.java,"tirios_agro_local_v2.db").build()
+        val repo=AgroRepository(db)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Forest, background = Cream,
-                onBackground = Ink, secondary = Coral), shapes = Shapes(medium = RoundedCornerShape(14.dp))) {
-                GranjaApp(repo)
+            MaterialTheme(colorScheme=lightColorScheme(primary=Green,secondary=Orange,background=BG,
+                surface=Color.White), shapes=Shapes(medium=RoundedCornerShape(16.dp))) {
+                Root(repo)
             }
         }
     }
 }
 
 @Composable
-fun GranjaApp(repo: GranjaRepository) {
-    val scope = rememberCoroutineScope()
+fun Root(repo:AgroRepository) {
+    val scope=rememberCoroutineScope()
     var ready by remember { mutableStateOf(false) }
     var logged by remember { mutableStateOf(false) }
-    var snapshot by remember { mutableStateOf<Snapshot?>(null) }
-    var currentScreen by remember { mutableStateOf(ModuleId.DASHBOARD) }
+    var state by remember { mutableStateOf<AgroSnapshot?>(null) }
+    var page by remember { mutableStateOf(Mods.HOME) }
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var showNotices by remember { mutableStateOf(false) }
+    var showTour by remember { mutableStateOf(false) }
+    var tourAt by remember { mutableIntStateOf(0) }
+    var detail by remember { mutableStateOf<Pair<String,Long>?>(null) }
 
-    LaunchedEffect(Unit) {
-        runCatching { repo.seedIfEmpty() }.onFailure { error = it.message ?: "Error al iniciar base de datos" }
-        ready = true
-    }
-    fun runTask(task: suspend () -> Unit) {
-        scope.launch {
-            busy = true
-            runCatching {
-                task()
-                snapshot = repo.snapshot()
-            }.onFailure { error = it.message ?: "Error inesperado" }
-            busy = false
-        }
-    }
-    if (!ready) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        return
-    }
-    if (!logged) {
-        LoginPage(error = error, busy = busy, onLogin = { email, pwd ->
-            scope.launch {
-                busy = true
-                val result = runCatching { repo.login(email, pwd) }.getOrElse { it.message ?: "Error" }
-                if (result.isEmpty()) {
-                    snapshot = repo.snapshot()
-                    currentScreen = ModuleId.DASHBOARD
-                    logged = true
-                    error = ""
-                } else error = result
-                busy = false
-            }
-        })
-        return
-    }
-    val snap = snapshot ?: return
-    val visibleModules = ModuleId.all.filter { it.first in snap.modules }
+    LaunchedEffect(Unit){ runCatching{repo.initialize()}.onFailure{error=it.message?:"Error de base de datos"};ready=true }
+    fun task(block:suspend()->Unit){ scope.launch {
+        busy=true
+        runCatching{block();state=repo.refresh()}.onFailure{error=it.message?:"Error inesperado"}
+        busy=false
+    } }
+    if(!ready){ Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()};return }
+    if(!logged){ Login(error,busy){ email,pass-> scope.launch {
+        busy=true
+        runCatching { val message=repo.login(email,pass);if(message.isNotEmpty()) error=message else {
+            state=repo.refresh();logged=true;page=Mods.HOME;error="";showTour=!state!!.user.onboardingCompleted;tourAt=0
+        } }.onFailure { error=it.message?:"Error" }
+        busy=false
+    } };return }
+    val s=state?:return
+    val nav=Mods.list.filter{it.first in s.modules}
     Scaffold(
-        topBar = {
-            Surface(color = Forest, shadowElevation = 2.dp) {
-                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("🐷 Mi Granja Porcina", color = Color.White, fontWeight = FontWeight.Bold)
-                        Text("${snap.user.name} · ${RoleId.label(snap.user.roleId)}",
-                            color = Color.White.copy(alpha = .85f), style = MaterialTheme.typography.labelSmall)
-                    }
-                    IconButton(onClick = {
-                        scope.launch {
-                            repo.logout()
-                            snapshot = null
-                            logged = false
-                            error = ""
+        topBar={ Surface(color=Green,shadowElevation=2.dp){Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=12.dp,vertical=8.dp),
+            verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){Text("TIRIOS AGRO",color=Color.White,fontWeight=FontWeight.Bold)
+                Text("Gestión Porcina · ${s.user.name}",color=Color.White.copy(alpha=.84f),style=MaterialTheme.typography.labelSmall)}
+            Box{ IconButton(onClick={showNotices=true}) {Icon(Icons.Default.Notifications,"Notificaciones",tint=Color.White)}
+                if(s.notices.any{!it.read}) Badge(Modifier.align(Alignment.TopEnd)){ Text("${s.notices.count{!it.read}}") }
+            }
+            IconButton(onClick={showTour=true;tourAt=0}){Icon(Icons.Default.HelpOutline,"Ayuda",tint=Color.White)}
+            IconButton(onClick={scope.launch{repo.logout();logged=false;state=null}}){Icon(Icons.Default.Logout,"Salir",tint=Color.White)}
+        }}},
+        bottomBar={ Surface(shadowElevation=4.dp){ Row(Modifier.fillMaxWidth().navigationBarsPadding().horizontalScroll(rememberScrollState()).padding(6.dp),
+            horizontalArrangement=Arrangement.spacedBy(4.dp)) { nav.forEach {(id,label)->
+            FilterChip(selected=page==id,onClick={page=id;detail=null},label={Text(label,maxLines=1)},leadingIcon={ModIcon(id)})
+        }}}}
+    ){pad -> Column(Modifier.fillMaxSize().padding(pad)){
+        if(error.isNotBlank()) Surface(color=Color(0xFFFFEBE8)){Row(Modifier.fillMaxWidth().padding(8.dp),verticalAlignment=Alignment.CenterVertically){
+            Text(error,color=Color(0xFF8D2D22),modifier=Modifier.weight(1f));TextButton(onClick={error=""}){Text("Cerrar")}}}
+        if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        when(page){
+            Mods.HOME -> HomePage(s,onNavigate={page=it},onDetail={kind,id->detail=kind to id})
+            Mods.INVENTORY -> InventoryPage(s,repo,::task,onDetail={kind,id->detail=kind to id})
+            Mods.EXPENSES -> OutlaysPage(s,repo,::task,onDetail={kind,id->detail=kind to id})
+            Mods.PARTNERS -> PartnersPage(s,repo,::task)
+            Mods.REPORTS -> ReportsPage(s,onDetail={kind,id->detail=kind to id})
+            Mods.ADMIN -> AdminPage(s,repo,::task)
+        }
+    }}
+    if(showTour) {
+        val steps=listOf("¡Bienvenido a TIRIOS AGRO!" to "Controla tu granja y sus resultados desde un solo lugar.",
+            "Inicio" to "Consulta animales activos, ventas, costos y notificaciones.",
+            "Inventario" to "Registra lotes, aretes, crías y alimento. Vende desde cada animal.",
+            "Gastos y compras" to "Anota qué compraste, para qué, quién lo pagó y su comprobante.",
+            "Socios y capital" to "Crea los socios y compara cuánto desembolsó cada uno.",
+            "Reportes" to "Consulta los resultados y exporta un PDF local.",
+            "Administración" to "Gestiona usuarios, permisos y el historial de auditoría.")
+        val visible=steps.filterIndexed{index,_-> index==0 || index==1 || (index==2&&Mods.INVENTORY in s.modules) ||
+            (index==3&&Mods.EXPENSES in s.modules)||(index==4&&Mods.PARTNERS in s.modules)||(index==5&&Mods.REPORTS in s.modules)||(index==6&&Mods.ADMIN in s.modules)}
+        val item=visible[tourAt.coerceIn(0,visible.lastIndex)]
+        AlertDialog(onDismissRequest={},title={Text(item.first)},text={Text(item.second)},
+            confirmButton={TextButton(onClick={if(tourAt>=visible.lastIndex){showTour=false;task{repo.finishTour()}}else tourAt++}){
+                Text(if(tourAt>=visible.lastIndex)"Empezar" else "Siguiente (${tourAt+1}/${visible.size})")}},
+            dismissButton={TextButton(onClick={showTour=false;task{repo.finishTour()}}){Text("Omitir")}})
+    }
+    if(showNotices) AlertDialog(onDismissRequest={showNotices=false},title={Text("Notificaciones")},
+        text={Column(Modifier.heightIn(max=450.dp).verticalScroll(rememberScrollState())) {
+            if(s.notices.isEmpty()) Text("Todavía no hay movimientos.")
+            s.notices.take(35).forEach { n ->
+                TextButton(onClick={showNotices=false;task{repo.readNotice(n.id)};page=n.module
+                    if(n.entityId!=null) {
+                        val target=when {
+                            n.module==Mods.EXPENSES -> "GASTO"
+                            n.module==Mods.INVENTORY && n.text.contains("VENTA:",ignoreCase=true) -> "VENTA"
+                            n.module==Mods.INVENTORY && (n.text.contains("EDICIÓN:") || n.text.contains("FALLECIMIENTO:") || n.text.contains("PARTO:")) -> "ANIMAL"
+                            else -> null
                         }
-                    }) { Icon(Icons.Default.Logout, "Cerrar sesión", tint = Color.White) }
-                }
+                        if(target!=null) detail=target to n.entityId
+                    }}){
+                    Column {Text((if(n.read)"" else "● ")+n.text);Text(day(n.at),style=MaterialTheme.typography.labelSmall)}
+                };HorizontalDivider()
             }
-        },
-        bottomBar = {
-            Surface(shadowElevation = 5.dp) {
-                Row(Modifier.fillMaxWidth().navigationBarsPadding().horizontalScroll(rememberScrollState()).padding(7.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    visibleModules.forEach { (id, label) ->
-                        FilterChip(selected = currentScreen == id, onClick = { currentScreen = id },
-                            label = { Text(label, maxLines = 1) })
-                    }
-                }
-            }
-        }
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            if (error.isNotBlank()) {
-                Surface(color = Color(0xFFFFECE8)) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(error, color = Color(0xFF95321E), modifier = Modifier.weight(1f))
-                        IconButton(onClick = { error = "" }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Close, "Cerrar error", tint = Color(0xFF95321E))
-                        }
-                    }
-                }
-            }
-            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (currentScreen !in snap.modules) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No tienes permiso para este módulo") }
-            } else {
-                when (currentScreen) {
-                    ModuleId.DASHBOARD -> Dashboard(snap)
-                    ModuleId.ANIMALS -> AnimalsPage(snap, repo::allowed, ::runTask, repo)
-                    ModuleId.LOTS -> LotsPage(snap, repo::allowed, ::runTask, repo)
-                    ModuleId.BIRTHS -> BirthsPage(snap, repo::allowed, ::runTask, repo)
-                    ModuleId.EXPENSES -> ExpensesPage(snap, repo::allowed, ::runTask, repo)
-                    ModuleId.SALES -> SalesPage(snap, repo::allowed, ::runTask, repo)
-                    ModuleId.REPORTS -> ReportsPage(snap)
-                    ModuleId.PARTNERS -> PartnersPage(snap)
-                    ModuleId.USERS -> UsersPage(snap, ::runTask, repo)
-                    ModuleId.AUDIT -> AuditPage(snap)
-                    ModuleId.SETTINGS -> SettingsPage(snap, ::runTask, repo)
-                }
-            }
-        }
+        }},confirmButton={TextButton(onClick={showNotices=false}){Text("Cerrar")}})
+    if(detail!=null){ val (kind,id)=detail!!
+        DetailPopup(s,kind,id,onDismiss={detail=null},onSell={amount,kg,buyer->task{repo.sell(id,Soles.parse(amount),kg.toDoubleOrNull()?:0.0,buyer)};detail=null},
+            onEditAnimal={tag,sex,stage,weight,birth,notes->task{
+                val birthAt=if(birth.isBlank()) null else java.time.LocalDate.parse(birth).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                repo.updateAnimal(id,tag,sex,stage,weight.toDoubleOrNull()?:0.0,birthAt,notes)
+            };detail=null},
+            onDeath={why,note->task{repo.death(id,System.currentTimeMillis(),why,note)};detail=null},
+            onVoid={reason->task{repo.voidOutlay(id,reason)};detail=null})
     }
 }
 
-@Composable
-private fun LoginPage(error: String, busy: Boolean, onLogin: (String, String) -> Unit) {
-    var email by remember { mutableStateOf("admin@granja.local") }
-    var password by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().background(Cream).verticalScroll(rememberScrollState())
-        .padding(28.dp), verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("🐷", style = MaterialTheme.typography.displayLarge)
-        Spacer(Modifier.height(8.dp))
-        Text("Mi Granja Porcina", style = MaterialTheme.typography.headlineMedium, color = Forest,
-            fontWeight = FontWeight.Bold)
-        Text("Demo local · sin internet · SQLite / Room", color = Ink.copy(alpha = .75f))
-        Spacer(Modifier.height(28.dp))
-        OutlinedTextField(email, { email = it }, label = { Text("Correo de prueba") },
-            singleLine = true, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(password, { password = it }, label = { Text("Contraseña") },
-            singleLine = true, visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth())
-        if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.padding(8.dp))
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = { onLogin(email, password) }, enabled = !busy,
-            modifier = Modifier.fillMaxWidth()) { Text("Iniciar sesión") }
-        Spacer(Modifier.height(20.dp))
-        Text("Selecciona una cuenta de prueba", fontWeight = FontWeight.SemiBold)
-        listOf(
-            Triple("Admin principal", "admin@granja.local", "Admin1234!"),
-            Triple("Admin operativo", "socio@granja.local", "Socio1234!"),
-            Triple("Visualizador", "visor@granja.local", "Visor1234!")
-        ).forEach { (title, user, pass) ->
-            OutlinedButton(onClick = { email = user; password = pass },
-                modifier = Modifier.fillMaxWidth().padding(top = 5.dp)) { Text(title) }
+@Composable fun ModIcon(id:String){val icon=when(id){Mods.HOME->Icons.Default.Home;Mods.INVENTORY->Icons.Default.Inventory2;
+    Mods.EXPENSES->Icons.Default.ReceiptLong;Mods.PARTNERS->Icons.Default.Groups;
+    Mods.REPORTS->Icons.Default.Assessment;else->Icons.Default.AdminPanelSettings}
+    Icon(icon,null,modifier=Modifier.size(17.dp))}
+
+@Composable fun Login(error:String,busy:Boolean,onLogin:(String,String)->Unit){
+    var email by remember{mutableStateOf("admin@granja.local")};var pass by remember{mutableStateOf("")}
+    Column(Modifier.fillMaxSize().background(BG).verticalScroll(rememberScrollState()).padding(24.dp),
+        horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+        Image(painterResource(R.drawable.logo_tirios),"Logo de TIRIOS AGRO",Modifier.size(132.dp))
+        Spacer(Modifier.height(10.dp));Text("TIRIOS AGRO",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold,color=Green)
+        Text("Gestión Porcina",color=Color.Gray)
+        Spacer(Modifier.height(26.dp));OutlinedTextField(email,{email=it},modifier=Modifier.fillMaxWidth(),label={Text("Correo")},singleLine=true)
+        OutlinedTextField(pass,{pass=it},modifier=Modifier.fillMaxWidth(),label={Text("Contraseña")},visualTransformation=PasswordVisualTransformation(),singleLine=true)
+        if(error.isNotBlank()) Text(error,color=Color.Red,modifier=Modifier.padding(8.dp))
+        Spacer(Modifier.height(12.dp));Button(onClick={onLogin(email,pass)},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text("Ingresar")}
+        Spacer(Modifier.height(18.dp));Text("Cuentas para validación de roles",style=MaterialTheme.typography.labelMedium)
+        listOf(Triple("Admin","admin@granja.local","Admin1234!"),Triple("Operativo","socio@granja.local","Socio1234!"),Triple("Lectura","visor@granja.local","Visor1234!")).forEach{(title,user,pwd)->
+            TextButton(onClick={email=user;pass=pwd}){Text(title)}
         }
-        Text("Usuarios ficticios. No utilizar estas claves en producción.",
-            style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 12.dp))
+        Text("Los movimientos se guardan solo en este celular.",color=Color.Gray,style=MaterialTheme.typography.labelSmall)
     }
 }
 
-@Composable
-fun Page(title: String, subtitle: String = "", content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(title, color = Forest, style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold)
-        if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall,
-            color = Ink.copy(alpha = .7f))
-        content()
-        Spacer(Modifier.height(80.dp))
-    }
-}
-
-@Composable
-fun Panel(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            content()
+@Composable fun Section(title:String,body:@Composable ColumnScope.()->Unit){
+    Card(Modifier.fillMaxWidth(),colors=CardDefaults.cardColors(containerColor=Color.White)){
+        Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text(title,fontWeight=FontWeight.Bold,color=Green,style=MaterialTheme.typography.titleMedium);body()
         }
     }
 }
-
-@Composable
-fun InfoLine(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Text(value, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+@Composable fun ScrollPage(title:String,body:@Composable ColumnScope.()->Unit){
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Text(title,color=Green,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);body()
     }
 }
-
-@Composable
-fun Selection(label: String, current: String, options: List<Pair<String, String>>, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("$label: ${options.firstOrNull { it.first == current }?.second ?: "Elegir"}",
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.weight(1f))
-            Icon(Icons.Default.ArrowDropDown, null)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
-            modifier = Modifier.heightIn(max = 300.dp)) {
-            options.forEach { (value, title) ->
-                DropdownMenuItem(text = { Text(title) }, onClick = { onSelect(value); expanded = false })
-            }
-        }
-    }
+@Composable fun Field(label:String,value:String,change:(String)->Unit,modifier:Modifier=Modifier){
+    OutlinedTextField(value,change,label={Text(label)},modifier=modifier.fillMaxWidth(),singleLine=true)
 }
-
-@Composable
-fun PositiveNumber(value: String, onChange: (String) -> Unit, label: String) =
-    OutlinedTextField(value, onChange, label = { Text(label) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true, modifier = Modifier.fillMaxWidth())
-
-@Composable
-fun CanOperate(repoAllowed: suspend (String, String) -> Boolean,
-               module: String, operation: String, body: @Composable (Boolean) -> Unit) {
-    var allowed by remember(module, operation) { mutableStateOf(false) }
-    LaunchedEffect(module, operation) { allowed = repoAllowed(module, operation) }
-    body(allowed)
+@Composable fun Choice(label:String,value:String,options:List<Pair<String,String>>,change:(String)->Unit){
+    var expanded by remember{mutableStateOf(false)}
+    Box { OutlinedButton(onClick={expanded=true},modifier=Modifier.fillMaxWidth()){
+        Text("$label: ${options.firstOrNull{it.first==value}?.second?:value}",maxLines=1); Spacer(Modifier.weight(1f));Icon(Icons.Default.ArrowDropDown,null)
+    };DropdownMenu(expanded=expanded,onDismissRequest={expanded=false}){options.forEach{(id,text)->
+        DropdownMenuItem(text={Text(text)},onClick={change(id);expanded=false})}} }
 }
-
-@Composable
-fun Dashboard(s: Snapshot) {
-    Page("Resumen de la granja", "Indicadores de la operación. Los importes son en soles.") {
-        val active = s.animals.count { it.state == "ACTIVO" }
-        val born = s.animals.count { it.origin == "NACIDO" }
-        val incomes = s.sales.filterNot { it.voided }.sumOf { it.amountCents }
-        val operations = s.expenses.filter { !it.voided && it.scope != "ACTIVO" }.sumOf { it.amountCents }
-        val assets = s.expenses.filter { !it.voided && it.scope == "ACTIVO" }.sumOf { it.amountCents }
-        val initial = s.contributions.sumOf { it.amountCents }
-        Panel("Inventario") {
-            InfoLine("Animales activos", "$active")
-            InfoLine("Nacidos en la granja", "$born")
-            InfoLine("Lotes", "${s.lots.size}")
-        }
-        if (ModuleId.REPORTS in s.modules) Panel("Resultado financiero") {
-            InfoLine("Capital aportado", Money.format(initial))
-            InfoLine("Infraestructura registrada (activos)", Money.format(assets))
-            InfoLine("Gastos operativos", Money.format(operations))
-            InfoLine("Ventas", Money.format(incomes))
-            InfoLine("Utilidad realizada estimada", Money.format(s.realizedProfit()))
-            Text("La inversión en corrales es un activo y no se carga completa a la primera venta. La depreciación aún no se calcula.",
-                style = MaterialTheme.typography.labelSmall)
-        }
-        Panel("Cómo usar esta demo") {
-            Text("1. En Lotes agrega una compra masiva.")
-            Text("2. En Chanchos actualiza pesos y aretes.")
-            Text("3. Registra partos, gastos individuales o compartidos y ventas.")
-            Text("4. Compara pagos de socios y revisa la rentabilidad.")
-            Text("5. Con el Admin principal configura permisos, bloqueos y consulta auditoría.")
-        }
-    }
+@Composable fun Stat(title:String,value:String,modifier:Modifier=Modifier){
+    Card(modifier,colors=CardDefaults.cardColors(containerColor=Color(0xFFEAF5EC))){Column(Modifier.padding(13.dp)){
+        Text(title,style=MaterialTheme.typography.labelMedium,color=Green);Spacer(Modifier.height(6.dp));
+        Text(value,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Green)}}
 }
+@Composable fun Line(label:String,value:String){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+    Text(label,modifier=Modifier.weight(1f));Text(value,fontWeight=FontWeight.SemiBold)}}
