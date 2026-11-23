@@ -12,8 +12,8 @@ android {
         applicationId = "pe.granja.porcina"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.1-local"
+        versionCode = 4
+        versionName = "0.2.2-local"
     }
     buildFeatures { compose = true }
     compileOptions {

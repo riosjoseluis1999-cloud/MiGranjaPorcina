@@ -18,10 +18,15 @@ assert '¿Quieres actualizar algún alimento anterior como agotado?' in finance
 assert 'if(!waste) assign("ALIMENTO"' in repo
 assert 'val oldUsed=d.usages()' in repo
 assert 'AGOTADO' in repo
-assert 'TIRIOS-AGRO-v2-1-APK' in (r/'.github/workflows/android-apk.yml').read_text()
+assert 'TIRIOS-AGRO-v0-2-2-APK' in (r/'.github/workflows/android-apk.yml').read_text()
 assert 'android-actions/setup-android@v4' in (r/'.github/workflows/android-apk.yml').read_text()
 assert '2025.10.00' in (r/'app/build.gradle.kts').read_text()
 assert (r/'app/src/main/res/drawable-nodpi/logo_tirios.png').is_file()
 ET.parse(r/'app/src/main/AndroidManifest.xml')
 ET.parse(r/'app/src/main/res/xml/file_paths.xml')
 print('Comprobaciones estáticas completadas; falta compilar con Android SDK.')
+
+# Los tres archivos del prototipo antiguo no deben formar parte de la versión limpia.
+for legacy in ["data/Repository.kt","Operations.kt","SecurityAndReports.kt"]:
+    assert not (r/"app/src/main/java/pe/granja/porcina"/legacy).exists(), f"Fuente obsoleta: {legacy}"
+assert 'rm -f app/src/main/java/pe/granja/porcina/data/Repository.kt' in (r/'.github/workflows/android-apk.yml').read_text()

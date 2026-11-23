@@ -1,3 +1,27 @@
+# TIRIOS AGRO — Corrección 0.2.2 de fuentes heredadas
+
+**Causa del error de compilación mostrado en GitHub Actions:** la versión antigua de Mi Granja Porcina quedó mezclada con la versión nueva. El archivo antiguo `data/Repository.kt` usa `ModuleId`, `RoleId`, `AnimalEntity`, `BirthEntity`, `GranjaDatabase`, etc.; la nueva versión usa `data/AgroRepository.kt`, `data/Database.kt`, `Mods`, `Roles`, `Animal`, `Birth` y `AgroDb`. Los dos repositorios no deben coexistir.
+
+**Borra en el repositorio remoto estos TRES archivos de la v0.1:**
+
+- `app/src/main/java/pe/granja/porcina/data/Repository.kt`
+- `app/src/main/java/pe/granja/porcina/Operations.kt`
+- `app/src/main/java/pe/granja/porcina/SecurityAndReports.kt`
+
+Estos archivos NO están en este ZIP. **Subir un ZIP o sobrescribir archivos NO borra automáticamente los anteriores que permanecen en GitHub.** Para facilitar la compilación aun antes de que completes la limpieza de GitHub, el workflow `android-apk.yml` ahora los elimina SOLO en el runner temporal de GitHub Actions, antes de compilar. De todas formas, bórralos del repositorio para que también compile en Android Studio.
+
+**Archivos correctos a conservar:**
+
+- `app/src/main/java/pe/granja/porcina/data/Database.kt` (modelo Room nuevo)
+- `app/src/main/java/pe/granja/porcina/data/AgroRepository.kt` (repositorio nuevo)
+- `app/src/main/java/pe/granja/porcina/MainActivity.kt` (pantalla principal nueva)
+- `app/src/main/java/pe/granja/porcina/ui/Details.kt`
+- `app/src/main/java/pe/granja/porcina/ui/Finance.kt`
+- `app/src/main/java/pe/granja/porcina/ui/Inventory.kt`
+- `app/src/main/java/pe/granja/porcina/ui/ReportsAdmin.kt`
+
+> Atención: no borres ni reemplaces tu base local de Room ni desinstales la app antigua si tienes datos reales que quieras conservar. El código fuente se revisó sin SDK de Android; la compilación completa debe validarse con GitHub Actions.
+
 # TIRIOS AGRO — Gestión Porcina (Android local v0.2)
 
 Proyecto Android nativo en **Kotlin + Jetpack Compose + Room**, preparado para probar el negocio desde cero **sin conexión a Google Sheets**. Incluye el logo verde y naranja seleccionado. El paquete Android se mantiene en `pe.granja.porcina` para actualizar la app ya instalada.
